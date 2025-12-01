@@ -1,454 +1,7 @@
-// import 'dart:async';
-// import 'package:fall_detection_app/src/service/sensor_monitor.dart';
-// import 'package:flutter/material.dart';
-// import 'package:flutter_foreground_task/flutter_foreground_task.dart';
-// import 'package:flutter_local_notifications/flutter_local_notifications.dart'
-//     as fln;
-// import 'package:permission_handler/permission_handler.dart';
-// import 'package:shared_preferences/shared_preferences.dart';
-// import 'package:wakelock_plus/wakelock_plus.dart';
-
-// import 'src/alarm/alarm_screen.dart';
-// import 'src/service/fall_foreground_task.dart';
-// import 'src/service/sensor_monitor.depreciated.dart';
-// import 'src/settings/settings_page.depreciated.dart';
-// import 'src/utils/app_navigator.dart' show navigatorKey;
-// import 'src/utils/navigation_helper.dart';
-
-// Future<void> main() async {
-//   WidgetsFlutterBinding.ensureInitialized();
-
-//   // Initialize foreground task
-//   FlutterForegroundTask.init(
-//     androidNotificationOptions: AndroidNotificationOptions(
-//       channelId: 'fall_detect_channel',
-//       channelName: 'Fall Detection',
-//       channelDescription: 'Monitoring activity to detect falls',
-//       channelImportance: NotificationChannelImportance.HIGH,
-//       priority: NotificationPriority.MAX,
-//       isSticky: true,
-//       visibility: NotificationVisibility.VISIBILITY_PUBLIC,
-//       buttons: [const NotificationButton(id: 'stop', text: 'Stop')],
-//     ),
-//     iosNotificationOptions: const IOSNotificationOptions(
-//       showNotification: true,
-//     ),
-//     foregroundTaskOptions: const ForegroundTaskOptions(
-//       interval: 500, // ms tick for background handler
-//       isOnceEvent: false,
-//       autoRunOnBoot: true,
-//       allowWakeLock: true,
-//       allowWifiLock: true,
-//     ),
-//   );
-
-//   // Initialize local notifications for alarm screen navigation
-//   await _initializeNotifications();
-
-//   runApp(const FallDetectionApp());
-// }
-
-// Future<void> _initializeNotifications() async {
-//   final fln.FlutterLocalNotificationsPlugin plugin =
-//       fln.FlutterLocalNotificationsPlugin();
-
-//   const fln.AndroidInitializationSettings androidInit =
-//       fln.AndroidInitializationSettings('@mipmap/ic_launcher');
-
-//   await plugin.initialize(
-//     const fln.InitializationSettings(android: androidInit),
-//     onDidReceiveNotificationResponse: (fln.NotificationResponse response) {
-//       // Handle notification tap - navigate to alarm screen
-//       if (response.payload == AlarmScreen.routeName) {
-//         // Use the same navigation function
-//         navigateToAlarmScreen();
-//       }
-//     },
-//   );
-
-//   // Create notification channel for alarm
-//   const fln.AndroidNotificationChannel alarmChannel =
-//       fln.AndroidNotificationChannel(
-//         'fall_alarm_channel',
-//         'Fall Alarm',
-//         description: 'Alerts for detected fall',
-//         importance: fln.Importance.max,
-//         playSound: true,
-//         enableVibration: true,
-//       );
-
-//   await plugin
-//       .resolvePlatformSpecificImplementation<
-//         fln.AndroidFlutterLocalNotificationsPlugin
-//       >()
-//       ?.createNotificationChannel(alarmChannel);
-
-//   // Store plugin instance for SensorMonitor to use
-//   SensorMonitor.setNotificationPlugin(plugin);
-// }
-
-// class FallDetectionApp extends StatelessWidget {
-//   const FallDetectionApp({super.key});
-
-//   @override
-//   Widget build(BuildContext context) {
-//     return MaterialApp(
-//       title: 'Elderly Fall Detection',
-//       debugShowCheckedModeBanner: false,
-//       navigatorKey: navigatorKey, // Use global navigator key
-//       theme: ThemeData(
-//         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
-//         useMaterial3: true,
-//       ),
-//       routes: {
-//         '/': (_) => const HomePage(),
-//         AlarmScreen.routeName: (_) => const AlarmScreen(),
-//         SettingsPage.routeName: (_) => const SettingsPage(),
-//       },
-//       initialRoute: '/',
-//     );
-//   }
-// }
-
-// class HomePage extends StatefulWidget {
-//   const HomePage({super.key});
-//   @override
-//   State<HomePage> createState() => _HomePageState();
-// }
-
-// class _HomePageState extends State<HomePage> {
-//   bool _serviceRunning = false;
-//   String? _emergencyPhone;
-//   Timer? _updateTimer;
-//   bool _initializing = false; // show loader while starting
-//   DateTime? _serviceStartTime; // for uptime display
-
-//   @override
-//   void initState() {
-//     super.initState();
-//     _loadPrefs();
-//     // Update UI every second to show sample count and uptime
-//     _updateTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-//       if (mounted) {
-//         setState(() {});
-//       }
-//     });
-//   }
-
-//   @override
-//   void dispose() {
-//     _updateTimer?.cancel();
-//     super.dispose();
-//   }
-
-//   Future<void> _loadPrefs() async {
-//     final prefs = await SharedPreferences.getInstance();
-//     setState(() {
-//       _emergencyPhone = prefs.getString('emergency_phone');
-//     });
-//   }
-
-//   Future<void> _ensurePermissions() async {
-//     await [
-//       Permission.activityRecognition,
-//       Permission.locationAlways,
-//       Permission.locationWhenInUse,
-//       Permission.sms,
-//       Permission.notification,
-//       Permission.camera,
-//     ].request();
-//   }
-
-//   Future<void> _startService() async {
-//     setState(() => _initializing = true);
-
-//     await _ensurePermissions();
-
-//     // Enable wakelock to keep CPU active
-//     await WakelockPlus.enable();
-
-//     // Start foreground service (keeps app alive, but doesn't handle sensors)
-//     await FlutterForegroundTask.startService(
-//       notificationTitle: 'Fall detection active',
-//       notificationText: 'Monitoring movements...',
-//       callback: startFallForegroundTask,
-//     );
-
-//     // Start sensor monitoring in main isolate (sensors_plus requires main isolate)
-//     await SensorMonitor().startMonitoring();
-
-//     setState(() {
-//       _serviceRunning = true;
-//       _serviceStartTime = DateTime.now();
-//       _initializing = false;
-//     });
-//   }
-
-//   Future<void> _stopService() async {
-//     // Stop sensor monitoring first
-//     await SensorMonitor().stopMonitoring();
-
-//     // Stop foreground service
-//     await FlutterForegroundTask.stopService();
-
-//     // Disable wakelock
-//     await WakelockPlus.disable();
-
-//     setState(() {
-//       _serviceRunning = false;
-//       _serviceStartTime = null;
-//     });
-//   }
-
-//   String _formatDuration(Duration d) {
-//     String two(int n) => n.toString().padLeft(2, '0');
-//     final hours = two(d.inHours);
-//     final minutes = two(d.inMinutes.remainder(60));
-//     final seconds = two(d.inSeconds.remainder(60));
-//     return '$hours:$minutes:$seconds';
-//   }
-
-//   @override
-//   Widget build(BuildContext context) {
-//     final samples = SensorMonitor().sampleCount;
-//     final uptime = (_serviceRunning && _serviceStartTime != null)
-//         ? _formatDuration(DateTime.now().difference(_serviceStartTime!))
-//         : '--:--:--';
-
-//     return Scaffold(
-//       appBar: AppBar(
-//         title: const Text('Elderly Fall Detection'),
-//         elevation: 0,
-//         backgroundColor: Colors.white,
-//         foregroundColor: Colors.black87,
-//         actions: [
-//           IconButton(
-//             icon: const Icon(Icons.settings_outlined),
-//             onPressed: () async {
-//               await Navigator.pushNamed(context, SettingsPage.routeName);
-//               await _loadPrefs();
-//             },
-//           ),
-//         ],
-//       ),
-//       body: Stack(
-//         children: [
-//           Padding(
-//             padding: const EdgeInsets.all(20),
-//             child: Column(
-//               crossAxisAlignment: CrossAxisAlignment.start,
-//               children: [
-//                 Row(
-//                   children: [
-//                     Expanded(
-//                       child: Column(
-//                         crossAxisAlignment: CrossAxisAlignment.start,
-//                         children: [
-//                           Text(
-//                             _serviceRunning
-//                                 ? 'Monitoring active'
-//                                 : 'Monitoring inactive',
-//                             style: Theme.of(context).textTheme.titleLarge
-//                                 ?.copyWith(fontWeight: FontWeight.w600),
-//                           ),
-//                           const SizedBox(height: 6),
-//                           Text(
-//                             _emergencyPhone == null || _emergencyPhone!.isEmpty
-//                                 ? 'Set an emergency contact in Settings'
-//                                 : 'Emergency: $_emergencyPhone',
-//                             style: Theme.of(context).textTheme.bodySmall
-//                                 ?.copyWith(color: Colors.black54),
-//                           ),
-//                         ],
-//                       ),
-//                     ),
-//                     Container(
-//                       width: 14,
-//                       height: 14,
-//                       decoration: BoxDecoration(
-//                         color: _serviceRunning
-//                             ? Colors.green
-//                             : Colors.grey.shade400,
-//                         shape: BoxShape.circle,
-//                       ),
-//                     ),
-//                   ],
-//                 ),
-//                 const SizedBox(height: 18),
-
-//                 // Stats row
-//                 Row(
-//                   children: [
-//                     Expanded(
-//                       child: Card(
-//                         shape: RoundedRectangleBorder(
-//                           borderRadius: BorderRadius.circular(12),
-//                         ),
-//                         elevation: 2,
-//                         child: Padding(
-//                           padding: const EdgeInsets.all(16),
-//                           child: Column(
-//                             crossAxisAlignment: CrossAxisAlignment.start,
-//                             children: [
-//                               const Text(
-//                                 'Samples',
-//                                 style: TextStyle(color: Colors.black54),
-//                               ),
-//                               const SizedBox(height: 8),
-//                               Text(
-//                                 '$samples',
-//                                 style: const TextStyle(
-//                                   fontSize: 22,
-//                                   fontWeight: FontWeight.bold,
-//                                 ),
-//                               ),
-//                             ],
-//                           ),
-//                         ),
-//                       ),
-//                     ),
-//                     const SizedBox(width: 12),
-//                     Expanded(
-//                       child: Card(
-//                         shape: RoundedRectangleBorder(
-//                           borderRadius: BorderRadius.circular(12),
-//                         ),
-//                         elevation: 2,
-//                         child: Padding(
-//                           padding: const EdgeInsets.all(16),
-//                           child: Column(
-//                             crossAxisAlignment: CrossAxisAlignment.start,
-//                             children: [
-//                               const Text(
-//                                 'Uptime',
-//                                 style: TextStyle(color: Colors.black54),
-//                               ),
-//                               const SizedBox(height: 8),
-//                               Text(
-//                                 uptime,
-//                                 style: const TextStyle(
-//                                   fontSize: 18,
-//                                   fontWeight: FontWeight.w600,
-//                                 ),
-//                               ),
-//                             ],
-//                           ),
-//                         ),
-//                       ),
-//                     ),
-//                     const SizedBox(width: 12),
-//                     Expanded(
-//                       child: Card(
-//                         shape: RoundedRectangleBorder(
-//                           borderRadius: BorderRadius.circular(12),
-//                         ),
-//                         elevation: 2,
-//                         child: Padding(
-//                           padding: const EdgeInsets.all(16),
-//                           child: Column(
-//                             crossAxisAlignment: CrossAxisAlignment.start,
-//                             children: [
-//                               const Text(
-//                                 'Alerts',
-//                                 style: TextStyle(color: Colors.black54),
-//                               ),
-//                               const SizedBox(height: 8),
-//                               const Text(
-//                                 '0',
-//                                 style: TextStyle(
-//                                   fontSize: 22,
-//                                   fontWeight: FontWeight.bold,
-//                                 ),
-//                               ),
-//                             ],
-//                           ),
-//                         ),
-//                       ),
-//                     ),
-//                   ],
-//                 ),
-
-//                 const SizedBox(height: 20),
-
-//                 Row(
-//                   children: [
-//                     Expanded(
-//                       child: ElevatedButton.icon(
-//                         icon: Icon(
-//                           _serviceRunning
-//                               ? Icons.stop_circle
-//                               : Icons.play_arrow,
-//                         ),
-//                         label: Text(
-//                           _serviceRunning
-//                               ? 'Stop Monitoring'
-//                               : 'Start Monitoring',
-//                         ),
-//                         onPressed: _serviceRunning
-//                             ? _stopService
-//                             : _startService,
-//                         style: ElevatedButton.styleFrom(
-//                           minimumSize: const Size.fromHeight(52),
-//                           shape: RoundedRectangleBorder(
-//                             borderRadius: BorderRadius.circular(12),
-//                           ),
-//                         ),
-//                       ),
-//                     ),
-//                     const SizedBox(width: 12),
-//                     Expanded(
-//                       child: OutlinedButton.icon(
-//                         icon: const Icon(Icons.warning_amber_outlined),
-//                         label: const Text('Trigger Test Alarm'),
-//                         onPressed: () {
-//                           Navigator.pushNamed(context, AlarmScreen.routeName);
-//                         },
-//                         style: OutlinedButton.styleFrom(
-//                           minimumSize: const Size.fromHeight(52),
-//                           shape: RoundedRectangleBorder(
-//                             borderRadius: BorderRadius.circular(12),
-//                           ),
-//                         ),
-//                       ),
-//                     ),
-//                   ],
-//                 ),
-
-//                 const Spacer(),
-//                 const Text(
-//                   'Note: The app uses a foreground service to run continuously, even when the screen is off. '
-//                   'Sensor monitoring runs in the main app to ensure reliable accelerometer access.',
-//                   style: TextStyle(color: Colors.black54),
-//                 ),
-//               ],
-//             ),
-//           ),
-
-//           // Loader overlay when initializing
-//           if (_initializing)
-//             Container(
-//               color: Colors.black45,
-//               child: Center(
-//                 child: Column(
-//                   mainAxisSize: MainAxisSize.min,
-//                   children: const [
-//                     CircularProgressIndicator(),
-//                     SizedBox(height: 12),
-//                     Text(
-//                       'Initializing...',
-//                       style: TextStyle(color: Colors.white),
-//                     ),
-//                   ],
-//                 ),
-//               ),
-//             ),
-//         ],
-//       ),
-//     );
-//   }
-// }
 import 'dart:async';
+import 'dart:developer' as developer;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart'
     as fln;
@@ -517,11 +70,36 @@ Future<void> _initializeNotifications() async {
   await plugin.initialize(
     const fln.InitializationSettings(android: androidInit),
     onDidReceiveNotificationResponse: (fln.NotificationResponse response) {
+      developer.log(
+        'Notification tapped: payload=${response.payload}, actionId=${response.actionId}',
+      );
       if (response.payload == AlarmScreen.routeName) {
-        navigateToAlarmScreen();
+        // User tapped notification - navigate to alarm screen
+        // This is critical for background + screen ON case where full-screen intent doesn't work
+        developer.log('Navigating to alarm screen from notification tap');
+        Future.delayed(const Duration(milliseconds: 100), () {
+          navigateToAlarmScreen();
+        });
       }
     },
   );
+
+  // Handle case where app was launched (cold start) from a notification tap
+  try {
+    final details = await plugin.getNotificationAppLaunchDetails();
+    if (details != null && details.didNotificationLaunchApp) {
+      final payload = details.notificationResponse?.payload;
+      developer.log('App launched from notification: payload=$payload');
+      if (payload == AlarmScreen.routeName) {
+        // Wait for app to fully initialize before navigating
+        Future.delayed(const Duration(milliseconds: 500), () {
+          navigateToAlarmScreen();
+        });
+      }
+    }
+  } catch (e) {
+    developer.log('Error checking notification launch details: $e');
+  }
 
   const fln.AndroidNotificationChannel alarmChannel =
       fln.AndroidNotificationChannel(
@@ -542,9 +120,15 @@ Future<void> _initializeNotifications() async {
   SensorMonitor.setNotificationPlugin(plugin);
 }
 
-class FallDetectionApp extends StatelessWidget {
+class FallDetectionApp extends StatefulWidget {
   const FallDetectionApp({super.key});
 
+  @override
+  State<FallDetectionApp> createState() => _FallDetectionAppState();
+}
+
+class _FallDetectionAppState extends State<FallDetectionApp>
+    with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
@@ -712,15 +296,15 @@ class _HomePageState extends State<HomePage> {
             value,
             style: Theme.of(context).textTheme.displayMedium?.copyWith(
               color: textPrimary,
-              fontSize: 22,
+              fontSize: MediaQuery.of(context).size.width * 0.04,
             ),
           ),
           const SizedBox(height: 4),
           Text(
             title,
-            style: Theme.of(
-              context,
-            ).textTheme.bodyMedium?.copyWith(fontSize: 19),
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              fontSize: MediaQuery.of(context).size.width * 0.03,
+            ),
           ),
         ],
       ),

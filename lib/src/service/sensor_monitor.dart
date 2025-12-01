@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:developer' as developer;
+import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart'
     as fln;
 import 'package:sensors_plus/sensors_plus.dart';
@@ -10,6 +11,7 @@ import '../utils/fall_detector.dart';
 import '../utils/ml_fall_detector.dart';
 import '../utils/navigation_helper.dart';
 import '../utils/rolling_buffer.dart';
+import '../utils/app_navigator.dart' show navigatorKey;
 
 /// Sensor monitor that runs in the main isolate (sensors_plus requires main isolate)
 class SensorMonitor {
@@ -195,6 +197,12 @@ class SensorMonitor {
         playSound: true,
         enableVibration: true,
         styleInformation: const fln.DefaultStyleInformation(true, true),
+        // Add click action to ensure navigation works when screen is on
+        autoCancel: false,
+        enableLights: true,
+        ledColor: const Color.fromARGB(255, 255, 0, 0), // Red LED
+        ledOnMs: 1000, // LED on for 1 second
+        ledOffMs: 500, // LED off for 0.5 seconds
       );
 
       await plugin.show(
