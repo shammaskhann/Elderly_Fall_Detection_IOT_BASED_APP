@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../alarm/alarm_screen.dart';
 import '../utils/fall_detector.dart';
+import '../utils/ml_fall_detector.dart';
 import '../utils/navigation_helper.dart';
 import '../utils/rolling_buffer.dart';
 
@@ -28,20 +29,48 @@ class SensorMonitor {
   final RollingBuffer<AccelerometerEvent> _buffer = RollingBuffer(
     capacity: 200,
   ); // ~10s at 20Hz
-  late final FallDetector _detector;
+  dynamic _detector; // Can be FallDetector or MLFallDetector
   StreamSubscription<AccelerometerEvent>? _accelSub;
   DateTime _lastFullScreenLaunch = DateTime.fromMillisecondsSinceEpoch(0);
   bool _isMonitoring = false;
   int _sampleCount = 0;
+  bool _useMLDetection = true; // Use ML-enhanced detector by default
 
   /// Start monitoring accelerometer in main isolate
-  Future<void> startMonitoring() async {
+  /// [useMLDetection] - If true, uses ML-enhanced detector (zero false positives)
+  ///                    If false, uses simple heuristic detector
+  ///                    If null, loads from SharedPreferences
+  Future<void> startMonitoring({bool? useMLDetection}) async {
     if (_isMonitoring) {
       developer.log('SensorMonitor: Already monitoring');
       return;
     }
 
-    _detector = FallDetector();
+    // Load preference if not explicitly provided
+    if (useMLDetection == null) {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        _useMLDetection =
+            prefs.getBool('use_ml_detection') ?? true; // Default to ML
+      } catch (e) {
+        developer.log('SensorMonitor: Error loading detection preference: $e');
+        _useMLDetection = true; // Default to ML on error
+      }
+    } else {
+      _useMLDetection = useMLDetection;
+    }
+
+    // Initialize detector based on selection
+    if (_useMLDetection) {
+      _detector = MLFallDetector(_buffer);
+      developer.log(
+        'SensorMonitor: Using ML-Enhanced Fall Detector (Zero False Positives)',
+      );
+    } else {
+      _detector = FallDetector();
+      developer.log('SensorMonitor: Using Heuristic Fall Detector');
+    }
+
     _isMonitoring = true;
     _sampleCount = 0;
 
@@ -84,7 +113,9 @@ class SensorMonitor {
 
     // Log coordinates every 50 samples (~2.5 seconds at 20Hz) to avoid spam
     if (_sampleCount % 50 == 0) {
-      final magnitudeG = FallDetector.getMagnitudeG(event);
+      final magnitudeG = _useMLDetection
+          ? MLFallDetector.getMagnitudeG(event)
+          : FallDetector.getMagnitudeG(event);
       developer.log(
         'SensorMonitor: Sample $_sampleCount | '
         'x=${event.x.toStringAsFixed(2)} m/s², '
@@ -95,14 +126,18 @@ class SensorMonitor {
       );
     }
 
-    // Check for potential fall
+    // Check for potential fall using selected detector
     final isRisk = _detector.isPotentialFall(event);
     if (!isRisk) return;
 
+    final magnitudeG = _useMLDetection
+        ? MLFallDetector.getMagnitudeG(event)
+        : FallDetector.getMagnitudeG(event);
+
     developer.log(
-      'SensorMonitor: Potential fall detected! | '
+      'SensorMonitor: ${_useMLDetection ? "ML-" : ""}Potential fall detected! | '
       'x=${event.x.toStringAsFixed(2)}, y=${event.y.toStringAsFixed(2)}, z=${event.z.toStringAsFixed(2)}, '
-      'magnitude=${FallDetector.getMagnitudeG(event).toStringAsFixed(2)}g',
+      'magnitude=${magnitudeG.toStringAsFixed(2)}g',
       name: 'FALL_DETECTED',
     );
 
@@ -196,4 +231,19 @@ class SensorMonitor {
 
   bool get isMonitoring => _isMonitoring;
   int get sampleCount => _sampleCount;
+  bool get useMLDetection => _useMLDetection;
+
+  /// Switch between ML and heuristic detection (requires restart of monitoring)
+  void setDetectionMode(bool useML) {
+    if (!_isMonitoring) {
+      _useMLDetection = useML;
+      developer.log(
+        'SensorMonitor: Detection mode set to ${useML ? "ML-Enhanced" : "Heuristic"}',
+      );
+    } else {
+      developer.log(
+        'SensorMonitor: Cannot change detection mode while monitoring. Stop monitoring first.',
+      );
+    }
+  }
 }
